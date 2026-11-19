@@ -38,9 +38,9 @@ export const getApprovedTuitions = async (req: Request, res: Response): Promise<
       filter.mode = mode.trim();
     }
 
-    const { tuitions } = getCollections();
+    const { tuitions, users } = getCollections();
 
-    const [items, total] = await Promise.all([
+    const [rawItems, total] = await Promise.all([
       tuitions
         .find(filter)
         .sort({ createdAt: -1 })
@@ -49,6 +49,16 @@ export const getApprovedTuitions = async (req: Request, res: Response): Promise<
         .toArray(),
       tuitions.countDocuments(filter)
     ]);
+
+    const items = await Promise.all(
+      rawItems.map(async (item) => {
+        if (item.tutorEmail) {
+          const tutorUser = await users.findOne({ email: item.tutorEmail }, { projection: { _id: 1 } });
+          return { ...item, tutorId: tutorUser?._id?.toString() };
+        }
+        return item;
+      })
+    );
 
     const totalPages = Math.ceil(total / limitNum) || 1;
 
@@ -74,12 +84,22 @@ export const getApprovedTuitions = async (req: Request, res: Response): Promise<
 
 export const getFeaturedTuitions = async (_req: Request, res: Response): Promise<void> => {
   try {
-    const { tuitions } = getCollections();
-    const items = await tuitions
+    const { tuitions, users } = getCollections();
+    const rawItems = await tuitions
       .find({ approvalStatus: 'approved', isActive: true })
       .sort({ createdAt: -1 })
       .limit(6)
       .toArray();
+
+    const items = await Promise.all(
+      rawItems.map(async (item) => {
+        if (item.tutorEmail) {
+          const tutorUser = await users.findOne({ email: item.tutorEmail }, { projection: { _id: 1 } });
+          return { ...item, tutorId: tutorUser?._id?.toString() };
+        }
+        return item;
+      })
+    );
 
     res.status(200).json({
       success: true,
