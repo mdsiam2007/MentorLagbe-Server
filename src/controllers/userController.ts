@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { ObjectId } from 'mongodb';
 import { getCollections } from '../config/db';
 import { AuthenticatedRequest } from '../middleware/auth';
-import { UserRole } from '../models/types';
+import { UserRole, IUser } from '../models/types';
 
 export const adminGetAllUsers = async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
@@ -259,6 +259,157 @@ export const getPublicTutorById = async (req: Request, res: Response): Promise<v
     res.status(500).json({
       success: false,
       message: 'Failed to retrieve tutor profile.',
+      error: error.message
+    });
+  }
+};
+
+export const toggleBookmark = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ success: false, message: 'Unauthorized' });
+      return;
+    }
+
+    const tuitionId = req.params.tuitionId as string;
+
+    if (!tuitionId || !ObjectId.isValid(tuitionId)) {
+      res.status(400).json({ success: false, message: 'Invalid Tuition ID.' });
+      return;
+    }
+
+    const { tuitions, users } = getCollections();
+
+    // Check if tuition exists
+    const tuition = await tuitions.findOne({ _id: new ObjectId(tuitionId) });
+    if (!tuition) {
+      res.status(404).json({ success: false, message: 'Tuition post not found.' });
+      return;
+    }
+
+    const user = (await users.findOne({ _id: new ObjectId(req.user.userId) })) as IUser | null;
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User account not found.' });
+      return;
+    }
+
+    const bookmarks = user.bookmarks || [];
+    const isAlreadyBookmarked = bookmarks.includes(tuitionId);
+
+    if (isAlreadyBookmarked) {
+      await users.updateOne(
+        { _id: new ObjectId(req.user.userId) },
+        { $pull: { bookmarks: tuitionId } as any }
+      );
+
+      res.status(200).json({
+        success: true,
+        isBookmarked: false,
+        message: 'Tuition removed from bookmarks.'
+      });
+    } else {
+      await users.updateOne(
+        { _id: new ObjectId(req.user.userId) },
+        { $addToSet: { bookmarks: tuitionId } as any }
+      );
+
+      res.status(200).json({
+        success: true,
+        isBookmarked: true,
+        message: 'Tuition bookmarked successfully.'
+      });
+    }
+  } catch (error: any) {
+    console.error('[UserController.toggleBookmark] Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update bookmark.',
+      error: error.message
+    });
+  }
+};
+
+export const getBookmarkedTuitions = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ success: false, message: 'Unauthorized' });
+      return;
+    }
+
+    const { users, tuitions } = getCollections();
+    const user = (await users.findOne({ _id: new ObjectId(req.user.userId) })) as IUser | null;
+
+    if (!user || !user.bookmarks || user.bookmarks.length === 0) {
+      res.status(200).json({
+        success: true,
+        count: 0,
+        tuitions: []
+      });
+      return;
+    }
+
+    const validIds = user.bookmarks
+      .filter((id) => typeof id === 'string' && ObjectId.isValid(id))
+      .map((id) => new ObjectId(id));
+
+    if (validIds.length === 0) {
+      res.status(200).json({
+        success: true,
+        count: 0,
+        tuitions: []
+      });
+      return;
+    }
+
+    const rawTuitions = await tuitions
+      .find({ _id: { $in: validIds } })
+      .toArray();
+
+    // Enrich with tutorId if available
+    const enriched = await Promise.all(
+      rawTuitions.map(async (item) => {
+        if (item.tutorEmail) {
+          const tutorUser = await users.findOne({ email: item.tutorEmail }, { projection: { _id: 1 } });
+          return { ...item, tutorId: tutorUser?._id?.toString() };
+        }
+        return item;
+      })
+    );
+
+    res.status(200).json({
+      success: true,
+      count: enriched.length,
+      tuitions: enriched
+    });
+  } catch (error: any) {
+    console.error('[UserController.getBookmarkedTuitions] Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve bookmarked tuitions.',
+      error: error.message
+    });
+  }
+};
+
+export const getBookmarkedIds = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ success: false, message: 'Unauthorized' });
+      return;
+    }
+
+    const { users } = getCollections();
+    const user = (await users.findOne({ _id: new ObjectId(req.user.userId) })) as IUser | null;
+
+    res.status(200).json({
+      success: true,
+      bookmarkIds: user?.bookmarks || []
+    });
+  } catch (error: any) {
+    console.error('[UserController.getBookmarkedIds] Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve bookmark IDs.',
       error: error.message
     });
   }

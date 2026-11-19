@@ -13,12 +13,24 @@ export interface IUser {
   phone?: string;
   bio?: string;
   plan: UserPlan;
+  bookmarks?: string[];
   createdAt: Date;
   updatedAt?: Date;
 }
 
 export type TuitionMode = 'Online' | 'Offline';
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
+
+export interface ITuitionReview {
+  _id?: string;
+  studentId: string;
+  studentName: string;
+  studentEmail: string;
+  studentImage?: string;
+  rating: number; // 1 to 5
+  comment: string;
+  createdAt: Date;
+}
 
 export interface ITuition {
   _id?: ObjectId;
@@ -35,6 +47,9 @@ export interface ITuition {
   tutorEmail: string;
   approvalStatus: ApprovalStatus;
   isActive: boolean;
+  reviews?: ITuitionReview[];
+  averageRating?: number;
+  totalReviews?: number;
   createdAt: Date;
   updatedAt?: Date;
 }

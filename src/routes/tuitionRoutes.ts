@@ -9,9 +9,11 @@ import {
   deleteTuition,
   toggleActiveStatus,
   adminGetAllTuitions,
-  adminUpdateApprovalStatus
+  adminUpdateApprovalStatus,
+  submitTuitionReview,
+  getTuitionReviews
 } from '../controllers/tuitionController';
-import { verifyToken, verifyTutor, verifyAdmin } from '../middleware/auth';
+import { verifyToken, verifyTutor, verifyAdmin, verifyStudent } from '../middleware/auth';
 
 const router = Router();
 
@@ -19,6 +21,10 @@ const router = Router();
 router.get('/', getApprovedTuitions);
 router.get('/featured', getFeaturedTuitions);
 router.get('/:id', getTuitionById);
+router.get('/:id/reviews', getTuitionReviews);
+
+// Student review route
+router.post('/:id/reviews', verifyToken, verifyStudent, submitTuitionReview);
 
 // Tutor routes
 router.post('/', verifyToken, verifyTutor, createTuition);

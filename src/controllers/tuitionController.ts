@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { ObjectId } from 'mongodb';
 import { getCollections } from '../config/db';
 import { AuthenticatedRequest } from '../middleware/auth';
-import { ITuition, IUser } from '../models/types';
+import { ITuition, IUser, ITuitionReview } from '../models/types';
 
 export const getApprovedTuitions = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -483,6 +483,158 @@ export const adminUpdateApprovalStatus = async (req: AuthenticatedRequest, res: 
     res.status(500).json({
       success: false,
       message: 'Failed to update approval status.',
+      error: error.message
+    });
+  }
+};
+
+export const submitTuitionReview = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ success: false, message: 'Unauthorized' });
+      return;
+    }
+
+    const id = req.params.id as string;
+    if (!id || !ObjectId.isValid(id)) {
+      res.status(400).json({ success: false, message: 'Invalid Tuition ID.' });
+      return;
+    }
+
+    const { rating, comment } = req.body;
+
+    const numRating = Number(rating);
+    if (!rating || isNaN(numRating) || numRating < 1 || numRating > 5 || !Number.isInteger(numRating)) {
+      res.status(400).json({
+        success: false,
+        message: 'Rating must be an integer between 1 and 5.'
+      });
+      return;
+    }
+
+    if (!comment || typeof comment !== 'string' || comment.trim() === '') {
+      res.status(400).json({
+        success: false,
+        message: 'Review comment is required.'
+      });
+      return;
+    }
+
+    const { applications, tuitions, users } = getCollections();
+
+    // Check if the student has an application for this tuition where status === 'accepted'
+    const acceptedApp = await applications.findOne({
+      $or: [
+        { tuitionId: new ObjectId(id) },
+        { tuitionId: id }
+      ],
+      studentEmail: req.user.email,
+      status: 'accepted'
+    });
+
+    if (!acceptedApp) {
+      res.status(403).json({
+        success: false,
+        message: 'You can only review tuitions for which your application has been accepted.'
+      });
+      return;
+    }
+
+    // Check if tuition exists
+    const tuition = (await tuitions.findOne({ _id: new ObjectId(id) })) as ITuition | null;
+    if (!tuition) {
+      res.status(404).json({ success: false, message: 'Tuition post not found.' });
+      return;
+    }
+
+    // Fetch student's profile for image
+    const dbUser = (await users.findOne({ _id: new ObjectId(req.user.userId) })) as IUser | null;
+
+    const newReview: ITuitionReview = {
+      _id: new ObjectId().toString(),
+      studentId: req.user.userId,
+      studentName: req.user.name || dbUser?.name || 'Student',
+      studentEmail: req.user.email,
+      studentImage: dbUser?.image || '',
+      rating: numRating,
+      comment: comment.trim(),
+      createdAt: new Date()
+    };
+
+    // Replace existing review if the student already reviewed, or push if new
+    const existingReviews: ITuitionReview[] = tuition.reviews || [];
+    const existingIndex = existingReviews.findIndex(
+      (r) => r.studentEmail === req.user!.email || r.studentId === req.user!.userId
+    );
+
+    let allReviews: ITuitionReview[];
+    if (existingIndex >= 0) {
+      allReviews = [...existingReviews];
+      allReviews[existingIndex] = newReview;
+    } else {
+      allReviews = [newReview, ...existingReviews];
+    }
+
+    const totalReviews = allReviews.length;
+    const sumRating = allReviews.reduce((sum, r) => sum + r.rating, 0);
+    const avg = totalReviews > 0 ? Math.round((sumRating / totalReviews) * 10) / 10 : 0;
+
+    await tuitions.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          reviews: allReviews,
+          averageRating: avg,
+          totalReviews: allReviews.length,
+          updatedAt: new Date()
+        }
+      }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: 'Review submitted successfully!',
+      review: newReview,
+      averageRating: avg,
+      totalReviews: allReviews.length
+    });
+  } catch (error: any) {
+    console.error('[TuitionController.submitTuitionReview] Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to submit review.',
+      error: error.message
+    });
+  }
+};
+
+export const getTuitionReviews = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    if (!id || !ObjectId.isValid(id)) {
+      res.status(400).json({ success: false, message: 'Invalid Tuition ID.' });
+      return;
+    }
+
+    const { tuitions } = getCollections();
+    const tuition = (await tuitions.findOne({ _id: new ObjectId(id) })) as ITuition | null;
+
+    if (!tuition) {
+      res.status(404).json({ success: false, message: 'Tuition post not found.' });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      reviews: tuition.reviews || [],
+      averageRating: tuition.averageRating || 0,
+      totalReviews: tuition.totalReviews || 0
+    });
+  } catch (error: any) {
+    console.error('[TuitionController.getTuitionReviews] Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch reviews.',
       error: error.message
     });
   }
