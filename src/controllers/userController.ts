@@ -1,4 +1,4 @@
-import { Response } from 'express';
+import { Request, Response } from 'express';
 import { ObjectId } from 'mongodb';
 import { getCollections } from '../config/db';
 import { AuthenticatedRequest } from '../middleware/auth';
@@ -153,6 +153,103 @@ export const getDashboardStats = async (req: AuthenticatedRequest, res: Response
     res.status(500).json({
       success: false,
       message: 'Failed to fetch dashboard stats.',
+      error: error.message
+    });
+  }
+};
+
+export const getPublicTutors = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { users, tuitions } = getCollections();
+    const { search, subject } = req.query;
+
+    const filter: any = { role: 'tutor' };
+
+    if (search && typeof search === 'string') {
+      filter.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { bio: { $regex: search, $options: 'i' } }
+      ];
+    }
+
+    const tutorList = await users
+      .find(filter, { projection: { password: 0 } })
+      .sort({ plan: -1, createdAt: -1 })
+      .toArray();
+
+    // Attach active tuition count & subjects to each tutor
+    const enrichedTutors = await Promise.all(
+      tutorList.map(async (tutor) => {
+        const tutorTuitions = await tuitions
+          .find({ tutorEmail: tutor.email, approvalStatus: 'approved', isActive: true })
+          .project({ subject: 1, monthlyFee: 1, mode: 1 })
+          .toArray();
+
+        const subjects = Array.from(new Set(tutorTuitions.map((t) => t.subject)));
+        return {
+          ...tutor,
+          tuitionCount: tutorTuitions.length,
+          subjects,
+          minFee: tutorTuitions.length > 0 ? Math.min(...tutorTuitions.map((t) => t.monthlyFee || 0)) : 0
+        };
+      })
+    );
+
+    // If subject query is provided, filter enriched tutors
+    const filtered = subject && typeof subject === 'string'
+      ? enrichedTutors.filter((t) => t.subjects.some((s) => s.toLowerCase().includes(subject.toLowerCase())))
+      : enrichedTutors;
+
+    res.status(200).json({
+      success: true,
+      data: filtered
+    });
+  } catch (error: any) {
+    console.error('[UserController.getPublicTutors] Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve tutors.',
+      error: error.message
+    });
+  }
+};
+
+export const getPublicTutorById = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    if (!id || !ObjectId.isValid(id)) {
+      res.status(400).json({ success: false, message: 'Invalid Tutor ID.' });
+      return;
+    }
+
+    const { users, tuitions } = getCollections();
+    const tutor = await users.findOne(
+      { _id: new ObjectId(id), role: 'tutor' },
+      { projection: { password: 0 } }
+    );
+
+    if (!tutor) {
+      res.status(404).json({ success: false, message: 'Tutor not found.' });
+      return;
+    }
+
+    const activeTuitions = await tuitions
+      .find({ tutorEmail: tutor.email, approvalStatus: 'approved', isActive: true })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.status(200).json({
+      success: true,
+      data: {
+        ...tutor,
+        tuitions: activeTuitions
+      }
+    });
+  } catch (error: any) {
+    console.error('[UserController.getPublicTutorById] Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve tutor profile.',
       error: error.message
     });
   }
