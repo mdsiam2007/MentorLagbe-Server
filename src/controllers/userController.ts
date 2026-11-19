@@ -42,6 +42,15 @@ export const adminUpdateUserRole = async (req: AuthenticatedRequest, res: Respon
       return;
     }
 
+    // Security Check: Prevent admin from accidentally demoting themselves and causing administrative lockout
+    if (req.user?.userId === id && role !== 'admin') {
+      res.status(400).json({
+        success: false,
+        message: 'Administrators cannot demote their own account to prevent system lockout.'
+      });
+      return;
+    }
+
     const { users } = getCollections();
     const result = await users.findOneAndUpdate(
       { _id: new ObjectId(id) },

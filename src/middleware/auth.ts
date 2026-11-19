@@ -1,7 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import { ObjectId } from 'mongodb';
+import { getCollections } from '../config/db';
 import { ENV } from '../config/env';
-import { UserRole, UserPlan } from '../models/types';
+import { UserRole, UserPlan, IUser } from '../models/types';
 
 export interface AuthUserPayload {
   userId: string;
@@ -15,11 +17,11 @@ export interface AuthenticatedRequest extends Request {
   user?: AuthUserPayload;
 }
 
-export const verifyToken = (
+export const verifyToken = async (
   req: AuthenticatedRequest,
   res: Response,
   next: NextFunction
-): void => {
+): Promise<void> => {
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -34,7 +36,32 @@ export const verifyToken = (
 
   try {
     const decoded = jwt.verify(token, ENV.JWT_SECRET) as AuthUserPayload;
-    req.user = decoded;
+
+    // Security Check: Verify live database user record to prevent stale/forged claim persistence
+    if (decoded.userId && ObjectId.isValid(decoded.userId)) {
+      const { users } = getCollections();
+      const dbUser = (await users.findOne({ _id: new ObjectId(decoded.userId) })) as IUser | null;
+
+      if (!dbUser) {
+        res.status(401).json({
+          success: false,
+          message: 'Account no longer exists or access has been revoked.'
+        });
+        return;
+      }
+
+      // Synchronize req.user with the live database role and subscription status
+      req.user = {
+        userId: dbUser._id!.toString(),
+        email: dbUser.email,
+        role: dbUser.role,
+        plan: dbUser.plan,
+        name: dbUser.name
+      };
+    } else {
+      req.user = decoded;
+    }
+
     next();
   } catch (error) {
     res.status(403).json({

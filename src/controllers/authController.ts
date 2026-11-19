@@ -34,11 +34,12 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     }
 
     const normalizedEmail = email.toLowerCase().trim();
-    const validRoles: UserRole[] = ['student', 'tutor', 'admin'];
+    // Security Fix: Prevent public self-registration as admin
+    const validRoles: UserRole[] = ['student', 'tutor'];
     if (!validRoles.includes(role)) {
       res.status(400).json({
         success: false,
-        message: 'Invalid role. Must be either student or tutor.'
+        message: 'Invalid role. Public registration is restricted to student and tutor roles.'
       });
       return;
     }

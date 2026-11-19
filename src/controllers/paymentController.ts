@@ -18,7 +18,51 @@ export const createCheckoutSession = async (req: AuthenticatedRequest, res: Resp
     }
 
     const { planType } = req.body; // 'pro_student' or 'pro_tutor'
-    const isTutor = req.user.role === 'tutor' || planType === 'pro_tutor';
+    const userRole = req.user.role;
+
+    // Security Check: Admins cannot purchase user plans
+    if (userRole === 'admin') {
+      res.status(400).json({
+        success: false,
+        message: 'Administrator accounts cannot purchase membership plans.'
+      });
+      return;
+    }
+
+    // Security Check: Strict role-plan match enforcement
+    if (userRole === 'student' && planType !== 'pro_student') {
+      res.status(403).json({
+        success: false,
+        message: 'Role Restriction: Students are only permitted to purchase the Pro Student Plan ($10).'
+      });
+      return;
+    }
+
+    if (userRole === 'tutor' && planType !== 'pro_tutor') {
+      res.status(403).json({
+        success: false,
+        message: 'Role Restriction: Tutors are only permitted to purchase the Pro Tutor Plan ($15).'
+      });
+      return;
+    }
+
+    const { users } = getCollections();
+    const dbUser = await users.findOne({ _id: new ObjectId(req.user.userId) });
+
+    if (!dbUser) {
+      res.status(404).json({ success: false, message: 'User account not found.' });
+      return;
+    }
+
+    if (dbUser.plan === 'pro') {
+      res.status(400).json({
+        success: false,
+        message: 'Your account already has an active Pro membership.'
+      });
+      return;
+    }
+
+    const isTutor = userRole === 'tutor';
     const amount = isTutor ? ENV.PRO_TUTOR_PRICE : ENV.PRO_STUDENT_PRICE;
     const planName = isTutor ? 'Pro Tutor Plan' : 'Pro Student Plan';
 
@@ -30,7 +74,7 @@ export const createCheckoutSession = async (req: AuthenticatedRequest, res: Resp
             product_data: {
               name: `MentorLagbe - ${planName}`,
               description: isTutor
-                ? 'Unlimited tuition postings, verified badge, top search placement.'
+                ? 'Unlimited tuition postings, verified mentor badge, top search placement.'
                 : 'Priority application review, direct tutor messaging, premium badge.'
             },
             unit_amount: amount * 100 // Stripe expects amounts in cents
@@ -45,8 +89,9 @@ export const createCheckoutSession = async (req: AuthenticatedRequest, res: Resp
         userId: req.user.userId,
         userEmail: req.user.email,
         userName: req.user.name,
-        userRole: req.user.role,
-        planName
+        userRole: userRole,
+        planType: isTutor ? 'pro_tutor' : 'pro_student',
+        planName: planName
       },
       success_url: `${ENV.CLIENT_URL}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${ENV.CLIENT_URL}/payment/cancel`
@@ -88,6 +133,8 @@ export const verifySession = async (req: Request, res: Response): Promise<void> 
 
     const { users, payments } = getCollections();
     const userEmail = session.customer_email || session.metadata?.userEmail;
+    const sessionRole = session.metadata?.userRole;
+    const sessionPlanType = session.metadata?.planType;
     const planName = session.metadata?.planName || 'Pro Plan';
     const amount = (session.amount_total || 0) / 100;
     const currency = session.currency?.toUpperCase() || 'USD';
@@ -97,16 +144,45 @@ export const verifySession = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
+    const user = (await users.findOne({ email: userEmail })) as IUser | null;
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User matching checkout session not found.' });
+      return;
+    }
+
+    // Role Integrity Check: Prevent cross-role plan activation
+    if (sessionRole && user.role !== sessionRole) {
+      res.status(403).json({
+        success: false,
+        message: 'Security Violation: Database role does not match session role.'
+      });
+      return;
+    }
+
+    if (user.role === 'tutor' && sessionPlanType !== 'pro_tutor') {
+      res.status(403).json({
+        success: false,
+        message: 'Security Violation: Tutor account cannot be upgraded via a student plan.'
+      });
+      return;
+    }
+
+    if (user.role === 'student' && sessionPlanType !== 'pro_student') {
+      res.status(403).json({
+        success: false,
+        message: 'Security Violation: Student account cannot be upgraded via a tutor plan.'
+      });
+      return;
+    }
+
     // Check if payment already recorded
     let paymentRecord = await payments.findOne({ stripeSessionId: sessionId });
 
     if (!paymentRecord) {
-      const user = (await users.findOne({ email: userEmail })) as IUser | null;
-
       const newPayment: IPayment = {
         userEmail,
-        userName: user?.name || session.metadata?.userName || 'MentorLagbe User',
-        userRole: user?.role || (session.metadata?.userRole as any) || 'student',
+        userName: user.name || session.metadata?.userName || 'MentorLagbe User',
+        userRole: user.role,
         planName,
         amount,
         currency,
@@ -162,6 +238,8 @@ export const handleWebhook = async (req: Request, res: Response): Promise<void> 
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object as Stripe.Checkout.Session;
     const userEmail = session.customer_email || session.metadata?.userEmail;
+    const sessionRole = session.metadata?.userRole;
+    const sessionPlanType = session.metadata?.planType;
 
     if (userEmail) {
       try {
@@ -169,26 +247,47 @@ export const handleWebhook = async (req: Request, res: Response): Promise<void> 
         const existing = await payments.findOne({ stripeSessionId: session.id });
 
         if (!existing) {
-          const user = await users.findOne({ email: userEmail });
-          const newPayment: IPayment = {
-            userEmail,
-            userName: user?.name || session.metadata?.userName || 'User',
-            userRole: user?.role || (session.metadata?.userRole as any) || 'student',
-            planName: session.metadata?.planName || 'Pro Plan',
-            amount: (session.amount_total || 0) / 100,
-            currency: (session.currency || 'usd').toUpperCase(),
-            transactionId: (session.payment_intent as string) || `txn_${Date.now()}`,
-            stripeSessionId: session.id,
-            paymentStatus: 'paid',
-            paidAt: new Date()
-          };
+          const user = (await users.findOne({ email: userEmail })) as IUser | null;
+          if (user) {
+            // Role integrity check in webhook
+            if (sessionRole && user.role !== sessionRole) {
+              console.error(`[Stripe Webhook] Role mismatch for ${userEmail}: DB=${user.role}, Session=${sessionRole}`);
+              res.status(400).json({ error: 'Role mismatch' });
+              return;
+            }
 
-          await payments.insertOne(newPayment as any);
-          await users.updateOne(
-            { email: userEmail },
-            { $set: { plan: 'pro', updatedAt: new Date() } }
-          );
-          console.log(`[Stripe Webhook] Upgraded user ${userEmail} to Pro.`);
+            if (user.role === 'tutor' && sessionPlanType !== 'pro_tutor') {
+              console.error(`[Stripe Webhook] Tutor ${userEmail} attempted student plan activation.`);
+              res.status(400).json({ error: 'Invalid plan for tutor' });
+              return;
+            }
+
+            if (user.role === 'student' && sessionPlanType !== 'pro_student') {
+              console.error(`[Stripe Webhook] Student ${userEmail} attempted tutor plan activation.`);
+              res.status(400).json({ error: 'Invalid plan for student' });
+              return;
+            }
+
+            const newPayment: IPayment = {
+              userEmail,
+              userName: user.name || session.metadata?.userName || 'User',
+              userRole: user.role,
+              planName: session.metadata?.planName || 'Pro Plan',
+              amount: (session.amount_total || 0) / 100,
+              currency: (session.currency || 'usd').toUpperCase(),
+              transactionId: (session.payment_intent as string) || `txn_${Date.now()}`,
+              stripeSessionId: session.id,
+              paymentStatus: 'paid',
+              paidAt: new Date()
+            };
+
+            await payments.insertOne(newPayment as any);
+            await users.updateOne(
+              { email: userEmail },
+              { $set: { plan: 'pro', updatedAt: new Date() } }
+            );
+            console.log(`[Stripe Webhook] Verified and upgraded user ${userEmail} (${user.role}) to Pro.`);
+          }
         }
       } catch (dbErr) {
         console.error('[Stripe Webhook] DB Error:', dbErr);
