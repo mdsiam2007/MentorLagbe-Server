@@ -342,6 +342,7 @@ export const getBookmarkedTuitions = async (req: AuthenticatedRequest, res: Resp
     if (!user || !user.bookmarks || user.bookmarks.length === 0) {
       res.status(200).json({
         success: true,
+        data: [],
         count: 0,
         tuitions: []
       });
@@ -355,6 +356,7 @@ export const getBookmarkedTuitions = async (req: AuthenticatedRequest, res: Resp
     if (validIds.length === 0) {
       res.status(200).json({
         success: true,
+        data: [],
         count: 0,
         tuitions: []
       });
@@ -378,6 +380,7 @@ export const getBookmarkedTuitions = async (req: AuthenticatedRequest, res: Resp
 
     res.status(200).json({
       success: true,
+      data: enriched,
       count: enriched.length,
       tuitions: enriched
     });

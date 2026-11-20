@@ -33,7 +33,31 @@ export const register = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    if (typeof name !== 'string' || name.trim().length < 2) {
+      res.status(400).json({
+        success: false,
+        message: 'Name must be at least 2 characters long.'
+      });
+      return;
+    }
+
     const normalizedEmail = email.toLowerCase().trim();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(normalizedEmail)) {
+      res.status(400).json({
+        success: false,
+        message: 'Please provide a valid email address.'
+      });
+      return;
+    }
+
+    if (typeof password !== 'string' || password.length < 6) {
+      res.status(400).json({
+        success: false,
+        message: 'Password must be at least 6 characters long.'
+      });
+      return;
+    }
     // Security Fix: Prevent public self-registration as admin
     const validRoles: UserRole[] = ['student', 'tutor'];
     if (!validRoles.includes(role)) {
@@ -67,6 +91,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
       phone: phone || '',
       bio: bio || '',
       image: image || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80',
+      bookmarks: [],
       createdAt: new Date(),
       updatedAt: new Date()
     };

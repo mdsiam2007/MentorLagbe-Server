@@ -172,10 +172,77 @@ export const createTuition = async (req: AuthenticatedRequest, res: Response): P
       description
     } = req.body;
 
-    if (!title || !subject || !classLevel || !mode || !monthlyFee || !daysPerWeek || !description) {
+    if (!title || !subject || !classLevel || !mode || monthlyFee === undefined || daysPerWeek === undefined || !description) {
       res.status(400).json({
         success: false,
         message: 'All required tuition fields must be provided.'
+      });
+      return;
+    }
+
+    if (typeof title !== 'string' || title.trim().length < 3 || title.trim().length > 150) {
+      res.status(400).json({
+        success: false,
+        message: 'Title must be between 3 and 150 characters.'
+      });
+      return;
+    }
+
+    if (typeof subject !== 'string' || subject.trim().length < 2) {
+      res.status(400).json({
+        success: false,
+        message: 'Subject must be at least 2 characters long.'
+      });
+      return;
+    }
+
+    if (typeof classLevel !== 'string' || classLevel.trim().length < 1) {
+      res.status(400).json({
+        success: false,
+        message: 'Class level is required.'
+      });
+      return;
+    }
+
+    const validModes = ['Online', 'Offline'];
+    if (!validModes.includes(mode)) {
+      res.status(400).json({
+        success: false,
+        message: 'Mode must be either Online or Offline.'
+      });
+      return;
+    }
+
+    const numFee = Number(monthlyFee);
+    if (isNaN(numFee) || numFee <= 0 || numFee > 500000) {
+      res.status(400).json({
+        success: false,
+        message: 'Monthly fee must be a valid positive number up to 500,000 BDT.'
+      });
+      return;
+    }
+
+    const numDays = Number(daysPerWeek);
+    if (isNaN(numDays) || !Number.isInteger(numDays) || numDays < 1 || numDays > 7) {
+      res.status(400).json({
+        success: false,
+        message: 'Days per week must be an integer between 1 and 7.'
+      });
+      return;
+    }
+
+    if (typeof description !== 'string' || description.trim().length < 10) {
+      res.status(400).json({
+        success: false,
+        message: 'Description must be at least 10 characters long.'
+      });
+      return;
+    }
+
+    if (mode === 'Offline' && (!location || typeof location !== 'string' || location.trim().length === 0)) {
+      res.status(400).json({
+        success: false,
+        message: 'Location is required for offline tuition batches.'
       });
       return;
     }
@@ -301,15 +368,59 @@ export const updateTuition = async (req: AuthenticatedRequest, res: Response): P
     } = req.body;
 
     const updates: Partial<ITuition> = { updatedAt: new Date() };
-    if (title) updates.title = title.trim();
-    if (subject) updates.subject = subject.trim();
-    if (classLevel) updates.classLevel = classLevel.trim();
-    if (mode) updates.mode = mode;
+    if (title !== undefined) {
+      if (typeof title !== 'string' || title.trim().length < 3 || title.trim().length > 150) {
+        res.status(400).json({ success: false, message: 'Title must be between 3 and 150 characters.' });
+        return;
+      }
+      updates.title = title.trim();
+    }
+    if (subject !== undefined) {
+      if (typeof subject !== 'string' || subject.trim().length < 2) {
+        res.status(400).json({ success: false, message: 'Subject must be at least 2 characters long.' });
+        return;
+      }
+      updates.subject = subject.trim();
+    }
+    if (classLevel !== undefined) {
+      if (typeof classLevel !== 'string' || classLevel.trim().length < 1) {
+        res.status(400).json({ success: false, message: 'Class level is required.' });
+        return;
+      }
+      updates.classLevel = classLevel.trim();
+    }
+    if (mode !== undefined) {
+      if (!['Online', 'Offline'].includes(mode)) {
+        res.status(400).json({ success: false, message: 'Mode must be either Online or Offline.' });
+        return;
+      }
+      updates.mode = mode;
+    }
     if (location !== undefined) updates.location = location.trim();
-    if (monthlyFee !== undefined) updates.monthlyFee = Number(monthlyFee);
-    if (daysPerWeek !== undefined) updates.daysPerWeek = Number(daysPerWeek);
-    if (bannerImage) updates.bannerImage = bannerImage.trim();
-    if (description) updates.description = description.trim();
+    if (monthlyFee !== undefined) {
+      const numFee = Number(monthlyFee);
+      if (isNaN(numFee) || numFee <= 0 || numFee > 500000) {
+        res.status(400).json({ success: false, message: 'Monthly fee must be a valid positive number up to 500,000 BDT.' });
+        return;
+      }
+      updates.monthlyFee = numFee;
+    }
+    if (daysPerWeek !== undefined) {
+      const numDays = Number(daysPerWeek);
+      if (isNaN(numDays) || !Number.isInteger(numDays) || numDays < 1 || numDays > 7) {
+        res.status(400).json({ success: false, message: 'Days per week must be an integer between 1 and 7.' });
+        return;
+      }
+      updates.daysPerWeek = numDays;
+    }
+    if (bannerImage !== undefined) updates.bannerImage = bannerImage.trim();
+    if (description !== undefined) {
+      if (typeof description !== 'string' || description.trim().length < 10) {
+        res.status(400).json({ success: false, message: 'Description must be at least 10 characters long.' });
+        return;
+      }
+      updates.description = description.trim();
+    }
     if (isActive !== undefined) updates.isActive = Boolean(isActive);
 
     const result = await tuitions.findOneAndUpdate(
@@ -449,7 +560,7 @@ export const adminGetAllTuitions = async (_req: AuthenticatedRequest, res: Respo
 export const adminUpdateApprovalStatus = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
-    const { status } = req.body;
+    const status = req.body.status || req.body.approvalStatus;
 
     if (!id || !ObjectId.isValid(id)) {
       res.status(400).json({ success: false, message: 'Invalid ID.' });
@@ -457,7 +568,7 @@ export const adminUpdateApprovalStatus = async (req: AuthenticatedRequest, res: 
     }
 
     if (!['approved', 'rejected', 'pending'].includes(status)) {
-      res.status(400).json({ success: false, message: 'Invalid status.' });
+      res.status(400).json({ success: false, message: 'Invalid status. Must be approved, rejected, or pending.' });
       return;
     }
 

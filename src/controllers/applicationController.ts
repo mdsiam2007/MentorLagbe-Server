@@ -29,6 +29,22 @@ export const applyForTuition = async (req: AuthenticatedRequest, res: Response):
       return;
     }
 
+    if (typeof studentPhone !== 'string' || studentPhone.trim().length < 6) {
+      res.status(400).json({
+        success: false,
+        message: 'Please provide a valid phone number (at least 6 digits).'
+      });
+      return;
+    }
+
+    if (typeof preferredSchedule !== 'string' || preferredSchedule.trim().length < 2) {
+      res.status(400).json({
+        success: false,
+        message: 'Preferred schedule must be provided.'
+      });
+      return;
+    }
+
     if (!ObjectId.isValid(tuitionId)) {
       res.status(400).json({ success: false, message: 'Invalid tuition ID.' });
       return;
@@ -39,6 +55,14 @@ export const applyForTuition = async (req: AuthenticatedRequest, res: Response):
 
     if (!tuition) {
       res.status(404).json({ success: false, message: 'Tuition post not found.' });
+      return;
+    }
+
+    if (tuition.tutorEmail === req.user.email) {
+      res.status(400).json({
+        success: false,
+        message: 'You cannot apply to your own tuition batch.'
+      });
       return;
     }
 
@@ -210,6 +234,11 @@ export const updateApplicantStatus = async (req: AuthenticatedRequest, res: Resp
 
     const id = req.params.id as string;
     const { status } = req.body;
+
+    if (!id || !ObjectId.isValid(id)) {
+      res.status(400).json({ success: false, message: 'Invalid Application ID.' });
+      return;
+    }
 
     if (!['accepted', 'rejected'].includes(status)) {
       res.status(400).json({ success: false, message: 'Status must be accepted or rejected.' });
