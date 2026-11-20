@@ -22,7 +22,20 @@ app.post(
 // Standard Middlewares
 app.use(
   cors({
-    origin: [ENV.CLIENT_URL, 'http://localhost:3000', 'https://mentorlagbe.vercel.app'],
+    origin: (origin, callback) => {
+      // allow requests with no origin (like mobile apps, curl, or same-origin)
+      if (!origin) return callback(null, true);
+      if (
+        origin === ENV.CLIENT_URL ||
+        origin === 'https://mentorlagbe-tau.vercel.app' ||
+        origin === 'https://mentorlagbe.vercel.app' ||
+        origin.endsWith('.vercel.app') ||
+        origin.includes('localhost')
+      ) {
+        return callback(null, true);
+      }
+      return callback(null, true); // Permissive for production deployment
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization']
